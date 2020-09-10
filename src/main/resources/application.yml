@@ -1,0 +1,23 @@
+ga:
+  prediction:
+    timeFrame: 24
+    timeUnit: HOURS
+  phenotype:
+    maximalPhenotypeAge: 5
+    genotype:
+      gene:
+        min: 0
+        max: 1000
+  evolution:
+    generations: 1000
+
+quarkus:
+  application:
+    name: airq-ga
+  datasource:
+    db-kind: postgresql
+    username: postgres
+    jdbc:
+      url: jdbc:postgresql://10.1.1.50:5432/warehouse
+    reactive:
+      url: postgresql://10.1.1.50:5432/warehouse
