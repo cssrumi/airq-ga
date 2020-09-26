@@ -21,3 +21,24 @@ quarkus:
       url: jdbc:postgresql://10.1.1.50:5432/warehouse
     reactive:
       url: postgresql://10.1.1.50:5432/warehouse
+
+mp:
+  messaging:
+    incoming:
+      data-enriched:
+        connector: smallrye-kafka
+        topic: data.enriched
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    outgoing:
+      phenotype-created:
+        connector: smallrye-kafka
+        topic: phenotype.created
+        value:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+
+kafka:
+  group:
+    id: airq-ga
+  bootstrap:
+    servers: 10.1.1.51:9092

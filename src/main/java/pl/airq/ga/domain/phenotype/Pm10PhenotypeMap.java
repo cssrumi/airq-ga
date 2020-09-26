@@ -8,9 +8,10 @@ import pl.airq.common.domain.enriched.EnrichedData;
 public class Pm10PhenotypeMap extends PhenotypeMap<EnrichedData> {
 
     public static final List<String> DEFAULT_ENRICHED_DATA_FIELDS = List.of("pm10", "temp", "wind", "windDirection", "humidity", "pressure");
+    public static final String FIELD = "pm10";
 
     private Pm10PhenotypeMap(List<Field> fields) {
-        super(EnrichedData.class, fields, FieldUtils.getField(EnrichedData.class, "pm10"));
+        super(EnrichedData.class, fields, FieldUtils.getField(EnrichedData.class, FIELD));
     }
 
     public static Pm10PhenotypeMap withFields(List<String> fields) {

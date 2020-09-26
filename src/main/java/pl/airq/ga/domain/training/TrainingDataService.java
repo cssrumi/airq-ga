@@ -10,7 +10,8 @@ import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Inject;
 import pl.airq.common.domain.enriched.EnrichedData;
 import pl.airq.common.domain.enriched.EnrichedDataQuery;
-import pl.airq.common.domain.phenotype.Prediction;
+import pl.airq.common.domain.exception.ResourceNotFoundException;
+import pl.airq.common.domain.prediction.PredictionConfig;
 import pl.airq.common.vo.StationId;
 import pl.airq.ga.domain.phenotype.Pm10PhenotypeMap;
 
@@ -30,14 +31,15 @@ public class TrainingDataService {
 
     public TrainingData createTrainingData(StationId stationId, Duration withPredictionAfter, List<String> fields) {
         final Pm10PhenotypeMap pm10PhenotypeMap = Pm10PhenotypeMap.withFields(fields);
-        final Prediction predictionConfig = new Prediction(
+        final PredictionConfig predictionConfig = new PredictionConfig(
                 withPredictionAfter.toHours(),
                 ChronoUnit.HOURS,
                 pm10PhenotypeMap.fieldToPredict());
         final TrainingData trainingData = new TrainingData(stationId, pm10PhenotypeMap.getFields(), predictionConfig);
-        final Set<EnrichedData> enrichedData = enrichedDataQuery.findAllByStationId(stationId)
-                                                                .await()
-                                                                .indefinitely();
+        final Set<EnrichedData> enrichedData = enrichedDataQuery
+                .findAllByStationId(stationId)
+                .onItem().ifNull().failWith(new ResourceNotFoundException("There is no EnrichedData for station: " + stationId.getId()))
+                .await().atMost(Duration.ofSeconds(5));
         for (EnrichedData entry : enrichedData) {
             findClosest(entry, enrichedData, withPredictionAfter)
                     .map(pm10PhenotypeMap::valueToPredict)

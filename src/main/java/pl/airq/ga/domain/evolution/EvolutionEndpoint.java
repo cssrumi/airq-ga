@@ -8,35 +8,25 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import org.jboss.resteasy.annotations.jaxrs.PathParam;
-import pl.airq.common.domain.phenotype.AirqPhenotype;
-import pl.airq.common.domain.station.StationQuery;
 import pl.airq.common.vo.StationId;
 
-@Path("/api")
+@Path("/api/evolution")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class EvolutionEndpoint {
 
-    private final EvolutionServiceFacade evolutionServiceFacade;
-    private final StationQuery stationQuery;
+    private final EvolutionProcessor evolutionProcessor;
 
     @Inject
-    public EvolutionEndpoint(EvolutionServiceFacade evolutionServiceFacade, StationQuery stationQuery) {
-        this.evolutionServiceFacade = evolutionServiceFacade;
-        this.stationQuery = stationQuery;
+    public EvolutionEndpoint(EvolutionProcessor evolutionProcessor) {
+        this.evolutionProcessor = evolutionProcessor;
     }
 
     @GET
-    @Path("/stations")
-    public Response getStations() {
-        return Response.ok(stationQuery.findAll().await().indefinitely()).build();
-    }
-
-    @GET
-    @Path("/calculate/{stationId}")
+    @Path("/{stationId}")
     public Response calculatePhenotype(@PathParam String stationId) {
         final StationId id = StationId.from(stationId);
-        final AirqPhenotype phenotype = evolutionServiceFacade.generateNewPhenotype(id);
-        return Response.ok(phenotype).build();
+        evolutionProcessor.process(id);
+        return Response.ok().build();
     }
 }

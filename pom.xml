@@ -8,7 +8,7 @@
     <parent>
         <groupId>pl.airq</groupId>
         <artifactId>parent-pom</artifactId>
-        <version>1.1</version>
+        <version>1.2</version>
     </parent>
 
     <scm>
@@ -19,9 +19,11 @@
     </scm>
 
     <properties>
-        <common.version>1.0</common.version>
+        <common.version>1.5</common.version>
         <commons-collections4.version>4.4</commons-collections4.version>
         <jenetics.version>6.0.1</jenetics.version>
+        <kafka.version>1.14.3</kafka.version>
+        <kafka-clients.version>2.6.0</kafka-clients.version>
     </properties>
 
     <dependencies>
@@ -47,6 +49,43 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-collections4</artifactId>
             <version>${commons-collections4.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-reactive-messaging-kafka</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5-mockito</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <version>${kafka.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>${kafka-clients.version}</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
