@@ -19,7 +19,7 @@
     </scm>
 
     <properties>
-        <common.version>1.6</common.version>
+        <common.version>1.8</common.version>
         <commons-collections4.version>4.4</commons-collections4.version>
         <jenetics.version>6.0.1</jenetics.version>
         <kafka.version>1.14.3</kafka.version>
