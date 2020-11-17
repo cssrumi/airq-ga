@@ -12,8 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pl.airq.common.process.AppEventBus;
 import pl.airq.common.vo.StationId;
-import pl.airq.ga.process.event.PhenotypeCreated;
-import pl.airq.ga.process.event.PhenotypeCreatedPayload;
+import pl.airq.ga.domain.phenotype.event.PhenotypeCreated;
+import pl.airq.ga.domain.phenotype.event.PhenotypeCreatedPayload;
 
 @Singleton
 public class EvolutionProcessor {
@@ -49,11 +49,11 @@ public class EvolutionProcessor {
     }
 
     private void consume(StationId stationId) {
-        LOGGER.info("Processing started for: {}", stationId.getId());
+        LOGGER.info("Processing started for: {}", stationId.value());
         serviceFacade.generateNewPhenotype(stationId)
                      .map(PhenotypeCreatedPayload::new)
                      .map(PhenotypeCreated::new)
                      .ifPresent(eventBus::publish);
-        LOGGER.info("Processing for {} completed.", stationId.getId());
+        LOGGER.info("Processing for {} completed.", stationId.value());
     }
 }

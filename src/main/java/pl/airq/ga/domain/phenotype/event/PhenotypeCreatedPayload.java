@@ -1,4 +1,4 @@
-package pl.airq.ga.process.event;
+package pl.airq.ga.domain.phenotype.event;
 
 import io.quarkus.runtime.annotations.RegisterForReflection;
 import pl.airq.common.domain.phenotype.AirqPhenotype;

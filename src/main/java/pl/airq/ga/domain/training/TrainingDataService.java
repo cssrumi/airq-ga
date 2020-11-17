@@ -10,8 +10,8 @@ import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Inject;
 import pl.airq.common.domain.enriched.EnrichedData;
 import pl.airq.common.domain.enriched.EnrichedDataQuery;
-import pl.airq.common.domain.exception.ResourceNotFoundException;
 import pl.airq.common.domain.prediction.PredictionConfig;
+import pl.airq.common.exception.ResourceNotFoundException;
 import pl.airq.common.vo.StationId;
 import pl.airq.ga.domain.phenotype.Pm10PhenotypeMap;
 
@@ -38,7 +38,7 @@ public class TrainingDataService {
         final TrainingData trainingData = new TrainingData(stationId, pm10PhenotypeMap.getFields(), predictionConfig);
         final Set<EnrichedData> enrichedData = enrichedDataQuery
                 .findAllByStationId(stationId)
-                .onItem().ifNull().failWith(new ResourceNotFoundException("There is no EnrichedData for station: " + stationId.getId()))
+                .onItem().ifNull().failWith(new ResourceNotFoundException("There is no EnrichedData for station: " + stationId.value()))
                 .await().atMost(Duration.ofSeconds(5));
         for (EnrichedData entry : enrichedData) {
             findClosest(entry, enrichedData, withPredictionAfter)

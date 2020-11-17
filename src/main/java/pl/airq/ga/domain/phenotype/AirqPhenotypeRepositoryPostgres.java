@@ -2,9 +2,8 @@ package pl.airq.ga.domain.phenotype;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.pgclient.PgPool;
-import io.vertx.mutiny.sqlclient.Row;
-import io.vertx.mutiny.sqlclient.RowSet;
 import io.vertx.mutiny.sqlclient.Tuple;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -12,6 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pl.airq.common.domain.phenotype.AirqPhenotype;
 import pl.airq.common.infrastructure.persistance.PersistentRepositoryPostgres;
+
+import static pl.airq.common.infrastructure.persistance.PersistentRepositoryPostgres.Default.NEVER_EXIST_QUERY;
+import static pl.airq.common.infrastructure.persistance.PersistentRepositoryPostgres.Default.NEVER_EXIST_TUPLE;
 
 @Singleton
 public class AirqPhenotypeRepositoryPostgres extends PersistentRepositoryPostgres<AirqPhenotype> {
@@ -33,37 +35,59 @@ public class AirqPhenotypeRepositoryPostgres extends PersistentRepositoryPostgre
     }
 
     @Override
-    protected Tuple prepareTuple(AirqPhenotype airqPhenotype) {
+    protected String updateQuery() {
+        return INSERT_QUERY;
+    }
+
+    @Override
+    protected String isAlreadyExistQuery() {
+        return NEVER_EXIST_QUERY;
+    }
+
+    @Override
+    protected Tuple insertTuple(AirqPhenotype data) {
         String fields = null;
         String values = null;
         String prediction = null;
         try {
-            fields = mapper.writeValueAsString(airqPhenotype.fields);
-            values = mapper.writeValueAsString(airqPhenotype.values);
-            prediction = mapper.writeValueAsString(airqPhenotype.prediction);
+            fields = mapper.writeValueAsString(data.fields);
+            values = mapper.writeValueAsString(data.values);
+            prediction = mapper.writeValueAsString(data.prediction);
         } catch (JsonProcessingException e) {
-            LOGGER.warn("Unable to stringify AirqPhenotype: {}", airqPhenotype);
+            LOGGER.warn("Unable to stringify AirqPhenotype: {}", data);
         }
 
-        return Tuple.of(airqPhenotype.timestamp)
-                    .addString(airqPhenotype.stationId.getId())
+        return Tuple.of(data.timestamp)
+                    .addString(data.stationId.value())
                     .addString(fields)
                     .addString(values)
                     .addString(prediction)
-                    .addDouble(airqPhenotype.fitness);
+                    .addDouble(data.fitness);
     }
 
     @Override
-    protected void postSaveAction(RowSet<Row> saveResult) {
+    protected Tuple updateTuple(AirqPhenotype data) {
+        return insertTuple(data);
     }
 
     @Override
-    protected void postProcessAction(Boolean result, AirqPhenotype data) {
-        if (Boolean.TRUE.equals(result)) {
-            LOGGER.info("AirqPhenotype saved successfully.");
+    protected Tuple isAlreadyExistTuple(AirqPhenotype data) {
+        return NEVER_EXIST_TUPLE;
+    }
+
+    @Override
+    protected Uni<Void> postProcessAction(Result result, AirqPhenotype data) {
+        return Uni.createFrom().voidItem()
+                  .invoke(() -> logResult(result, data));
+    }
+
+    private void logResult(Result result, AirqPhenotype data) {
+        if (result.isSuccess()) {
+            LOGGER.info("AirqPhenotype has been {}.", result);
             return;
         }
 
-        LOGGER.warn("Unable to save AirqPhenotype: {}", data);
+        LOGGER.warn("Insertion result: {} for {}", result, data);
     }
+
 }

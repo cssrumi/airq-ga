@@ -30,12 +30,16 @@ mp:
         topic: data.enriched
         value:
           deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        key:
+          deserializer: pl.airq.common.kafka.TSKeyDeserializer
     outgoing:
       phenotype-created:
         connector: smallrye-kafka
         topic: phenotype.created
         value:
           serializer: org.apache.kafka.common.serialization.StringSerializer
+        key:
+          serializer: pl.airq.common.kafka.SKeySerializer
 
 kafka:
   group:

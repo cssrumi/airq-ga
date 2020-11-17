@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import javax.enterprise.context.ApplicationScoped;
@@ -12,10 +13,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pl.airq.common.domain.PersistentRepository;
-import pl.airq.common.domain.exception.ResourceNotFoundException;
 import pl.airq.common.domain.phenotype.AirqPhenotype;
 import pl.airq.common.domain.phenotype.AirqPhenotypeQuery;
 import pl.airq.common.domain.station.StationQuery;
+import pl.airq.common.exception.ResourceNotFoundException;
 import pl.airq.common.vo.StationId;
 import pl.airq.ga.domain.training.TrainingData;
 import pl.airq.ga.domain.training.TrainingDataService;
@@ -50,7 +51,7 @@ public class EvolutionServiceFacade {
 
     public Optional<AirqPhenotype> generateNewPhenotype(StationId stationId) {
         if (stationQuery.findById(stationId).await().asOptional().atMost(Duration.ofSeconds(5)).isEmpty()) {
-            LOGGER.info("Station: {} does not exist", stationId.getId());
+            LOGGER.info("Station: {} does not exist", stationId.value());
             return Optional.empty();
         }
 
@@ -58,37 +59,39 @@ public class EvolutionServiceFacade {
         try {
             trainingData = trainingDataService.createTrainingData(stationId, timeFrame);
         } catch (ResourceNotFoundException e) {
-            LOGGER.warn("Unable to create training data for: {}.", stationId.getId(), e);
+            LOGGER.warn("Unable to create training data for: {}.", stationId.value(), e);
             return Optional.empty();
         }
 
-        LOGGER.info("{} created for Station: {}.", trainingData, stationId.getId());
-        final Set<AirqPhenotype> phenotypes = airqPhenotypeQuery.findByStationId(stationId)
-                                                                .await()
-                                                                .asOptional()
-                                                                .atMost(Duration.ofSeconds(10))
-                                                                .orElse(Collections.emptySet());
+        LOGGER.info("{} created for Station: {}.", trainingData, stationId.value());
+        Set<AirqPhenotype> basePhenotypes = basePhenotypes(stationId);
 
-        final Set<AirqPhenotype> best;
-        if (!phenotypes.isEmpty()) {
-            LOGGER.info("Airq phenotypes query result: {}", phenotypes);
-            best = Collections.singleton(Collections.min(phenotypes, Comparator.comparing(phenotype -> phenotype.fitness)));
-        } else {
-            LOGGER.info("Airq phenotypes not found.");
-            best = phenotypes;
-        }
-
-        final AirqPhenotype newPhenotype = evolutionService.compute(trainingData, best);
+        final AirqPhenotype newPhenotype = evolutionService.compute(trainingData, basePhenotypes);
         LOGGER.info("New phenotype computed with fitness: {}", newPhenotype.fitness);
 
-        if (best.stream().findFirst().map(old -> newPhenotype.fitness < old.fitness).orElse(Boolean.TRUE)) {
-            repository.save(newPhenotype)
-                      .await().indefinitely();
-            LOGGER.info("New phenotype has been saved");
-            return Optional.of(newPhenotype);
+        repository.save(newPhenotype)
+                  .await().indefinitely();
+        LOGGER.info("New phenotype has been saved");
+        return Optional.of(newPhenotype);
+    }
+
+    private Set<AirqPhenotype> basePhenotypes(StationId stationId) {
+        Set<AirqPhenotype> phenotypes = new HashSet<>();
+        airqPhenotypeQuery.findByStationId(stationId)
+                          .await().asOptional().atMost(Duration.ofSeconds(10))
+                          .map(set -> Collections.min(set, Comparator.comparing(phenotype -> phenotype.fitness)))
+                          .ifPresent(phenotypes::add);
+
+        airqPhenotypeQuery.findLatestByStationId(stationId)
+                          .await().asOptional().atMost(Duration.ofSeconds(10))
+                          .ifPresent(phenotypes::add);
+
+        if (!phenotypes.isEmpty()) {
+            LOGGER.info("Base phenotypes: {}", phenotypes.size());
+        } else {
+            LOGGER.info("Base phenotypes not found.");
         }
 
-        LOGGER.debug("Phenotype not found");
-        return Optional.empty();
+        return phenotypes;
     }
 }

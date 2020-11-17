@@ -8,7 +8,7 @@
     <parent>
         <groupId>pl.airq</groupId>
         <artifactId>parent-pom</artifactId>
-        <version>1.3</version>
+        <version>1.4-SNAPSHOT</version>
     </parent>
 
     <scm>
@@ -19,11 +19,8 @@
     </scm>
 
     <properties>
-        <common.version>1.8</common.version>
-        <commons-collections4.version>4.4</commons-collections4.version>
+        <common.version>1.10-SNAPSHOT</common.version>
         <jenetics.version>6.0.1</jenetics.version>
-        <kafka.version>1.14.3</kafka.version>
-        <kafka-clients.version>2.6.0</kafka-clients.version>
     </properties>
 
     <dependencies>
@@ -48,7 +45,6 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-collections4</artifactId>
-            <version>${commons-collections4.version}</version>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -78,13 +74,11 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>kafka</artifactId>
-            <version>${kafka.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-clients</artifactId>
-            <version>${kafka-clients.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
