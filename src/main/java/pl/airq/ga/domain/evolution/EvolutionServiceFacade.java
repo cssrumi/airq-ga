@@ -1,15 +1,11 @@
 package pl.airq.ga.domain.evolution;
 
 import java.time.Duration;
-import java.time.temporal.ChronoUnit;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pl.airq.common.domain.PersistentRepository;
@@ -18,6 +14,7 @@ import pl.airq.common.domain.phenotype.AirqPhenotypeQuery;
 import pl.airq.common.domain.station.StationQuery;
 import pl.airq.common.exception.ResourceNotFoundException;
 import pl.airq.common.vo.StationId;
+import pl.airq.ga.config.AirqGaProperties;
 import pl.airq.ga.domain.training.TrainingData;
 import pl.airq.ga.domain.training.TrainingDataService;
 
@@ -33,20 +30,18 @@ public class EvolutionServiceFacade {
     private final StationQuery stationQuery;
 
     @Inject
-    public EvolutionServiceFacade(
-            @ConfigProperty(name = "ga.prediction.timeFrame") Long timeFrame,
-            @ConfigProperty(name = "ga.prediction.timeUnit") ChronoUnit timeUnit,
-            EvolutionService evolutionService,
-            TrainingDataService trainingDataService,
-            AirqPhenotypeQuery airqPhenotypeQuery,
-            PersistentRepository<AirqPhenotype> repository,
-            StationQuery stationQuery) {
+    public EvolutionServiceFacade(AirqGaProperties properties,
+                                  EvolutionService evolutionService,
+                                  TrainingDataService trainingDataService,
+                                  AirqPhenotypeQuery airqPhenotypeQuery,
+                                  PersistentRepository<AirqPhenotype> repository,
+                                  StationQuery stationQuery) {
         this.evolutionService = evolutionService;
         this.trainingDataService = trainingDataService;
         this.airqPhenotypeQuery = airqPhenotypeQuery;
         this.repository = repository;
         this.stationQuery = stationQuery;
-        this.timeFrame = Duration.of(timeFrame, timeUnit);
+        this.timeFrame = properties.getPrediction().duration();
     }
 
     public Optional<AirqPhenotype> generateNewPhenotype(StationId stationId) {
@@ -63,6 +58,11 @@ public class EvolutionServiceFacade {
             return Optional.empty();
         }
 
+        if (trainingData == null || trainingData.size() == 0) {
+            LOGGER.warn("TrainingData is empty. Process stopped...");
+            return Optional.empty();
+        }
+
         LOGGER.info("{} created for Station: {}.", trainingData, stationId.value());
         Set<AirqPhenotype> basePhenotypes = basePhenotypes(stationId);
 
@@ -70,16 +70,15 @@ public class EvolutionServiceFacade {
         LOGGER.info("New phenotype computed with fitness: {}", newPhenotype.fitness);
 
         repository.save(newPhenotype)
-                  .await().indefinitely();
+                  .await().atMost(Duration.ofSeconds(10));
         LOGGER.info("New phenotype has been saved");
         return Optional.of(newPhenotype);
     }
 
     private Set<AirqPhenotype> basePhenotypes(StationId stationId) {
         Set<AirqPhenotype> phenotypes = new HashSet<>();
-        airqPhenotypeQuery.findByStationId(stationId)
+        airqPhenotypeQuery.findBestByStationId(stationId)
                           .await().asOptional().atMost(Duration.ofSeconds(10))
-                          .map(set -> Collections.min(set, Comparator.comparing(phenotype -> phenotype.fitness)))
                           .ifPresent(phenotypes::add);
 
         airqPhenotypeQuery.findLatestByStationId(stationId)

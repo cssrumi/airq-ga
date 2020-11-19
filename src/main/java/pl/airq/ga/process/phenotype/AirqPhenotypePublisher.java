@@ -42,9 +42,10 @@ public class AirqPhenotypePublisher {
     }
 
     Uni<Void> publish(SKey key, AirqPhenotypeCreatedEvent event) {
-        LOGGER.info("Publishing... {} - {}", key.value(), event.eventType());
         return Uni.createFrom().item(createMessage(key, event))
+                  .invoke(() -> LOGGER.info("Publishing... {} - {}", key.value(), event.eventType()))
                   .onItem().invoke(emitter::send)
+                  .invoke(() -> LOGGER.info("Published {} - {}", key.value(), event.eventType()))
                   .onItem().ignore().andContinueWithNull();
     }
 

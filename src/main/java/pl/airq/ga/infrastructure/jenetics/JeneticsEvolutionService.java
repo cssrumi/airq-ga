@@ -14,10 +14,10 @@ import java.util.List;
 import java.util.Set;
 import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pl.airq.common.domain.phenotype.AirqPhenotype;
+import pl.airq.ga.config.AirqGaProperties;
 import pl.airq.ga.domain.evolution.EvolutionService;
 import pl.airq.ga.domain.evolution.ProblemEvaluation;
 import pl.airq.ga.domain.phenotype.AirqPhenotypeMapper;
@@ -37,19 +37,14 @@ class JeneticsEvolutionService implements EvolutionService {
     private final AirqPhenotypeMapper<Phenotype<DoubleGene, Double>> mapper;
 
     @Inject
-    JeneticsEvolutionService(
-            @ConfigProperty(name = "ga.phenotype.genotype.gene.min") Integer min,
-            @ConfigProperty(name = "ga.phenotype.genotype.gene.max") Integer max,
-            @ConfigProperty(name = "ga.phenotype.maximalPhenotypeAge", defaultValue = "5") Integer maximalPhenotypeAge,
-            @ConfigProperty(name = "ga.evolution.generations", defaultValue = "1000") Long generations,
-            @ConfigProperty(name = "ga.evolution.populationSize", defaultValue = "100") Integer populationSize,
-            ProblemEvaluation<Genotype<DoubleGene>> problemEvaluation,
-            AirqPhenotypeMapper<Phenotype<DoubleGene, Double>> mapper) {
-        this.min = min;
-        this.max = max;
-        this.maximalPhenotypeAge = maximalPhenotypeAge;
-        this.generations = generations;
-        this.populationSize = populationSize;
+    JeneticsEvolutionService(AirqGaProperties properties,
+                             ProblemEvaluation<Genotype<DoubleGene>> problemEvaluation,
+                             AirqPhenotypeMapper<Phenotype<DoubleGene, Double>> mapper) {
+        this.min = properties.getPhenotype().getGenotype().getGene().getMin();
+        this.max = properties.getPhenotype().getGenotype().getGene().getMax();
+        this.maximalPhenotypeAge = properties.getPhenotype().getMaximalAge();
+        this.generations = properties.getEvolution().getGenerations();
+        this.populationSize = properties.getEvolution().getPopulationSize();
         this.problemEvaluation = problemEvaluation;
         this.mapper = mapper;
     }

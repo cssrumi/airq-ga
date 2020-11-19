@@ -1,4 +1,4 @@
-package pl.airq.ga.domain.config;
+package pl.airq.ga.process;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.arc.impl.Reflections;

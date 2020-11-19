@@ -5,6 +5,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.mockito.InjectMock;
 import io.quarkus.test.junit.mockito.InjectSpy;
 import io.smallrye.mutiny.Uni;
+import io.vertx.mutiny.pgclient.PgPool;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
@@ -12,161 +13,216 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.NoSuchElementException;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.enterprise.context.Dependent;
 import javax.enterprise.inject.Produces;
 import javax.inject.Inject;
 import org.apache.commons.lang3.RandomUtils;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.testcontainers.shaded.org.apache.commons.lang.RandomStringUtils;
 import pl.airq.common.domain.DataProvider;
-import pl.airq.common.domain.enriched.AirqDataEnrichedEvent;
-import pl.airq.common.domain.enriched.AirqDataEnrichedPayload;
 import pl.airq.common.domain.enriched.EnrichedData;
 import pl.airq.common.domain.enriched.EnrichedDataQuery;
 import pl.airq.common.domain.phenotype.AirqPhenotype;
-import pl.airq.common.domain.phenotype.AirqPhenotypeCreatedEvent;
 import pl.airq.common.domain.phenotype.AirqPhenotypeQuery;
 import pl.airq.common.domain.station.Station;
 import pl.airq.common.domain.station.StationQuery;
+import pl.airq.common.kafka.AirqEventDeserializer;
+import pl.airq.common.kafka.AirqEventSerializer;
+import pl.airq.common.kafka.SKeyDeserializer;
+import pl.airq.common.kafka.TSKeySerializer;
 import pl.airq.common.process.EventParser;
+import pl.airq.common.process.ctx.enriched.EnrichedDataCreatedEvent;
+import pl.airq.common.process.ctx.enriched.EnrichedDataDeletedEvent;
+import pl.airq.common.process.ctx.enriched.EnrichedDataEventPayload;
+import pl.airq.common.process.ctx.enriched.EnrichedDataUpdatedEvent;
+import pl.airq.common.process.ctx.phenotype.AirqPhenotypeCreatedEvent;
+import pl.airq.common.process.ctx.phenotype.AirqPhenotypeCreatedPayload;
 import pl.airq.common.process.event.AirqEvent;
+import pl.airq.common.store.key.SKey;
+import pl.airq.common.store.key.TSKey;
 import pl.airq.common.vo.StationId;
 import pl.airq.common.vo.StationLocation;
-import pl.airq.ga.domain.phenotype.MockAirqPhenotypeRepositoryPostgres;
 import pl.airq.ga.domain.phenotype.Pm10PhenotypeMap;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static pl.airq.ga.integration.DBConstant.CREATE_AIRQ_PHENOTYPE_TABLE;
+import static pl.airq.ga.integration.DBConstant.DROP_AIRQ_PHENOTYPE_TABLE;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@QuarkusTestResource(PostgresResource.class)
 @QuarkusTestResource(KafkaResource.class)
 @QuarkusTest
 public class IntegrationTest {
 
-    @ConfigProperty(name = "mp.messaging.incoming.data-enriched.topic")
-    private String dataEnrichedTopic;
-    @ConfigProperty(name = "ga.prediction.timeFrame")
-    private Long timeFrame;
-    @ConfigProperty(name = "ga.prediction.timeUnit")
-    private ChronoUnit timeUnit;
+    private final Map<SKey, AirqEvent<AirqPhenotypeCreatedPayload>> eventsMap = new ConcurrentHashMap<>();
+    private final List<AirqEvent<AirqPhenotypeCreatedPayload>> eventsList = new CopyOnWriteArrayList<>();
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean shouldConsume = new AtomicBoolean(true);
 
     @InjectMock
-    private AirqPhenotypeQuery airqPhenotypeQuery;
+    StationQuery stationQuery;
     @InjectMock
-    private StationQuery stationQuery;
-    @InjectMock
-    private EnrichedDataQuery enrichedDataQuery;
+    EnrichedDataQuery enrichedDataQuery;
 
     @InjectSpy
-    private MockAirqPhenotypeRepositoryPostgres repository;
+    AirqPhenotypeQuery airqPhenotypeQuery;
 
     @Inject
-    private EventParser parser;
+    PgPool client;
     @Inject
-    private KafkaConsumer<Void, String> kafkaConsumer;
+    KafkaProducer<TSKey, AirqEvent<EnrichedDataEventPayload>> producer;
     @Inject
-    private KafkaProducer<Void, String> kafkaProducer;
+    KafkaConsumer<SKey, AirqEvent<AirqPhenotypeCreatedPayload>> consumer;
+
+    @ConfigProperty(name = "mp.messaging.incoming.data-enriched.topic")
+    String enrichedDataTopic;
+    @ConfigProperty(name = "mp.messaging.outgoing.phenotype-created.topic")
+    String phenotypeCreatedTopic;
+    @ConfigProperty(name = "ga.prediction.time-frame")
+    Long timeFrame;
+    @ConfigProperty(name = "ga.prediction.time-unit")
+    ChronoUnit timeUnit;
+
+    @BeforeAll
+    void startConsuming() {
+        executor.submit(() -> {
+            while (shouldConsume.get()) {
+                consumer.poll(Duration.ofMillis(100))
+                        .records(phenotypeCreatedTopic)
+                        .forEach(record -> {
+                            eventsMap.put(record.key(), record.value());
+                            eventsList.add(record.value());
+                        });
+            }
+        });
+    }
+
+    @AfterAll
+    void stopConsuming() {
+        shouldConsume.set(false);
+        executor.shutdown();
+    }
+
 
     @BeforeEach
     void beforeEach() {
-        repository.setSaveAndUpsertResult(Boolean.TRUE);
-        reset(repository, airqPhenotypeQuery, stationQuery, enrichedDataQuery);
-        when(airqPhenotypeQuery.findByStationId(any())).thenReturn(Uni.createFrom().nullItem());
+        recreateAirqPhenotypeTable();
+        eventsMap.clear();
+        eventsList.clear();
+
         when(stationQuery.findById(any())).thenReturn(Uni.createFrom().nullItem());
         when(enrichedDataQuery.findAllByStationId(any())).thenReturn(Uni.createFrom().nullItem());
     }
 
-    @AfterAll
-    void clear() {
-        kafkaProducer.close();
-    }
-
     @Test
-    void integration_withoutPhenotypeInDB_expectNewPhenotypeSavedAndEventPublished() {
+    void EnrichedDataCreatedEventArrived_withoutPhenotypeInDB_expectNewPhenotypeSavedAndEventPublished() {
         StationId stationId = stationId();
-        final AirqDataEnrichedEvent event = airqDataEnrichedEvent(stationId);
-        final List<EnrichedData> enrichedDataList = generateEnrichedDataSinceLast2Days(stationId);
+        List<EnrichedData> enrichedDataList = generateEnrichedDataSinceLast2Days(stationId);
+        EnrichedDataEventPayload createdPayload = new EnrichedDataEventPayload(enrichedDataList.get(0));
+        EnrichedDataCreatedEvent createdEvent = new EnrichedDataCreatedEvent(OffsetDateTime.now(), createdPayload);
+
         when(enrichedDataQuery.findAllByStationId(any())).thenReturn(Uni.createFrom().item(new HashSet<>(enrichedDataList)));
         when(stationQuery.findById(any())).thenReturn(Uni.createFrom().item(new Station(stationId, StationLocation.EMPTY)));
 
-        sendEvent(event);
+        TSKey createdKey = sendEvent(createdEvent);
+        AirqEvent<AirqPhenotypeCreatedPayload> receivedEvent = awaitForEvent(createdKey);
 
-        final ConsumerRecord<Void, String> record = kafkaConsumer.poll(Duration.ofMinutes(1)).iterator().next();
-        final AirqEvent<?> airqEvent = parser.deserializeDomainEvent(record.value());
-
-        assertTrue(airqEvent instanceof AirqPhenotypeCreatedEvent);
-        final AirqPhenotype result = ((AirqPhenotypeCreatedEvent) airqEvent).payload.airqPhenotype;
-        assertNotNull(result);
-        assertTrue(result.fields.stream().noneMatch(Objects::isNull));
-        assertEquals(Pm10PhenotypeMap.DEFAULT_ENRICHED_DATA_FIELDS, result.fields);
-        assertEquals(result.values.size(), result.fields.size());
-        assertTrue(result.values.stream().noneMatch(Objects::isNull));
-        assertEquals(stationId, result.stationId);
-        assertNotNull(result.timestamp);
-        assertTrue(result.fitness > 0);
-        assertNotNull(result.prediction);
-        assertEquals(timeFrame, result.prediction.timeframe);
-        assertEquals(timeUnit, result.prediction.timeUnit);
-        assertEquals(Pm10PhenotypeMap.FIELD, result.prediction.field);
-        verify(stationQuery, timeout(Duration.ofSeconds(2).toMillis())).findById(any());
-        verify(enrichedDataQuery, timeout(Duration.ofSeconds(2).toMillis())).findAllByStationId(any());
-        verify(airqPhenotypeQuery, timeout(Duration.ofSeconds(2).toMillis())).findByStationId(any());
-        verify(repository, timeout(Duration.ofSeconds(2).toMillis())).save(any());
+        verifyAirqPhenotypeCount(1);
+        verifyAirqPhenotypeCreatedEvent(receivedEvent, stationId);
     }
 
     @Test
-    void integration_withoutPhenotypeInDBAndEnrichedData_expectEmptyComputationResultAndEventNotPublished() {
+    void EnrichedDataUpdatedEventArrived_withoutPhenotypeInDB_expectNewPhenotypeSavedAndEventPublished() {
         StationId stationId = stationId();
-        final AirqDataEnrichedEvent event = airqDataEnrichedEvent(stationId);
+        List<EnrichedData> enrichedDataList = generateEnrichedDataSinceLast2Days(stationId);
+        EnrichedDataEventPayload updatedPayload = new EnrichedDataEventPayload(enrichedDataList.get(0));
+        EnrichedDataUpdatedEvent updatedEvent = new EnrichedDataUpdatedEvent(OffsetDateTime.now(), updatedPayload);
+
+        when(enrichedDataQuery.findAllByStationId(any())).thenReturn(Uni.createFrom().item(new HashSet<>(enrichedDataList)));
         when(stationQuery.findById(any())).thenReturn(Uni.createFrom().item(new Station(stationId, StationLocation.EMPTY)));
 
-        sendEvent(event);
+        TSKey updatedKey = sendEvent(updatedEvent);
+        AirqEvent<AirqPhenotypeCreatedPayload> receivedEvent = awaitForEvent(updatedKey);
+
+        verifyAirqPhenotypeCount(1);
+        verifyAirqPhenotypeCreatedEvent(receivedEvent, stationId);
+    }
+
+    @Test
+    void EnrichedDataCreatedEventArrived_withoutPhenotypeInDBAndEnrichedData_expectEmptyComputationResultAndEventNotPublished() {
+        StationId stationId = stationId();
+        EnrichedData enrichedData = enrichedData(OffsetDateTime.now(), stationId);
+        EnrichedDataEventPayload createdPayload = new EnrichedDataEventPayload(enrichedData);
+        EnrichedDataCreatedEvent createdEvent = new EnrichedDataCreatedEvent(OffsetDateTime.now(), createdPayload);
+
+        when(enrichedDataQuery.findAllByStationId(any())).thenReturn(Uni.createFrom().item(new HashSet<>()));
+        when(stationQuery.findById(any())).thenReturn(Uni.createFrom().item(new Station(stationId, StationLocation.EMPTY)));
+
+        sendEvent(createdEvent);
 
         verify(enrichedDataQuery, timeout(Duration.ofSeconds(5).toMillis())).findAllByStationId(any());
         verify(stationQuery, timeout(Duration.ofSeconds(2).toMillis())).findById(any());
+        sleep(Duration.ofSeconds(2));
         verifyNoInteractions(airqPhenotypeQuery);
-        verifyNoInteractions(repository);
-        verifyThatNoEventSent(Duration.ofSeconds(3));
+        assertThat(eventsList).isEmpty();
+        verifyAirqPhenotypeCount(0);
     }
 
     @Test
-    void integration_withoutStationNotFound_expectEmptyComputationResultAndEventNotPublished() {
+    void EnrichedDataCreatedEventArrived_withStationNotFound_expectEmptyComputationResultAndEventNotPublished() {
         StationId stationId = stationId();
-        final AirqDataEnrichedEvent event = airqDataEnrichedEvent(stationId);
+        EnrichedData enrichedData = enrichedData(OffsetDateTime.now(), stationId);
+        EnrichedDataEventPayload createdPayload = new EnrichedDataEventPayload(enrichedData);
+        EnrichedDataCreatedEvent createdEvent = new EnrichedDataCreatedEvent(OffsetDateTime.now(), createdPayload);
 
-        sendEvent(event);
+        sendEvent(createdEvent);
 
         verify(stationQuery, timeout(Duration.ofSeconds(5).toMillis())).findById(any());
         verifyNoInteractions(enrichedDataQuery);
         verifyNoInteractions(airqPhenotypeQuery);
-        verifyNoInteractions(repository);
-        verifyThatNoEventSent(Duration.ofSeconds(3));
+        assertThat(eventsList).isEmpty();
+        verifyAirqPhenotypeCount(0);
     }
 
-    private void verifyThatNoEventSent(Duration awaitDuration) {
-        final ConsumerRecord<Void, String> record;
-        try {
-            record = kafkaConsumer.poll(awaitDuration).iterator().next();
-        } catch (NoSuchElementException e) {
-            return;
-        }
+    @Test
+    void EnrichedDataDeletedEventArrived_withStationNotFound_expectEmptyComputationResultAndEventNotPublished() {
+        StationId stationId = stationId();
+        EnrichedData enrichedData = enrichedData(OffsetDateTime.now(), stationId);
+        EnrichedDataEventPayload deletedPayload = new EnrichedDataEventPayload(enrichedData);
+        EnrichedDataDeletedEvent deletedEvent = new EnrichedDataDeletedEvent(OffsetDateTime.now(), deletedPayload);
 
-        fail("Record has been found: " + record.value());
+        sendEvent(deletedEvent);
+
+        sleep(Duration.ofSeconds(2));
+        verifyNoInteractions(enrichedDataQuery);
+        verifyNoInteractions(airqPhenotypeQuery);
+        assertThat(eventsList).isEmpty();
+        verifyAirqPhenotypeCount(0);
     }
 
     private StationId stationId() {
@@ -175,6 +231,9 @@ public class IntegrationTest {
 
     private List<EnrichedData> generateEnrichedDataSinceLast2Days(StationId stationId) {
         OffsetDateTime current = OffsetDateTime.now();
+        current = current.minusMinutes(current.getMinute())
+                         .minusSeconds(current.getSecond())
+                         .minusNanos(current.getNano());
         List<EnrichedData> enrichedDataList = new ArrayList<>();
         for (int i = 0; i < 24 * 2; i++) {
             current = current.minusHours(1);
@@ -201,59 +260,89 @@ public class IntegrationTest {
         );
     }
 
-    private AirqDataEnrichedEvent airqDataEnrichedEvent(StationId stationId) {
-        EnrichedData data = enrichedData(OffsetDateTime.now(), stationId);
-        AirqDataEnrichedPayload payload = new AirqDataEnrichedPayload(data);
-
-        return new AirqDataEnrichedEvent(OffsetDateTime.now(), payload);
+    private void verifyAirqPhenotypeCount(int value) {
+        Set<AirqPhenotype> data = airqPhenotypeQuery.findAll().await().atMost(Duration.ofSeconds(2));
+        assertThat(data).hasSize(value);
     }
 
-    private void sendEvent(AirqEvent<?> airqEvent) {
-        final String rawEvent = parser.parse(airqEvent);
-        String topic = getTopic(airqEvent);
-        final Future<RecordMetadata> future = kafkaProducer.send(new ProducerRecord<>(topic, rawEvent));
+    private void verifyAirqPhenotypeCreatedEvent(AirqEvent<AirqPhenotypeCreatedPayload> event, StationId stationId) {
+        assertThat(event).isInstanceOf(AirqPhenotypeCreatedEvent.class);
+        final AirqPhenotype airqPhenotype = event.payload.airqPhenotype;
+        assertThat(airqPhenotype).isNotNull();
+        assertThat(airqPhenotype.fields).containsExactlyInAnyOrderElementsOf(Pm10PhenotypeMap.DEFAULT_ENRICHED_DATA_FIELDS);
+        assertThat(airqPhenotype.values).noneMatch(Objects::isNull);
+        assertThat(airqPhenotype.stationId).isEqualTo(stationId);
+        assertThat(airqPhenotype.timestamp).isBeforeOrEqualTo(OffsetDateTime.now());
+        assertThat(airqPhenotype.fitness).isGreaterThan(0);
+        assertThat(airqPhenotype.prediction).isNotNull();
+        assertThat(airqPhenotype.prediction.timeUnit).isEqualTo(timeUnit);
+        assertThat(airqPhenotype.prediction.timeframe).isEqualTo(timeFrame);
+        assertThat(airqPhenotype.prediction.field).isEqualTo(Pm10PhenotypeMap.FIELD);
+    }
+
+    private void recreateAirqPhenotypeTable() {
+        client.query(DROP_AIRQ_PHENOTYPE_TABLE).execute()
+              .flatMap(r -> client.query(CREATE_AIRQ_PHENOTYPE_TABLE).execute())
+              .await().atMost(Duration.ofSeconds(5));
+    }
+
+    private TSKey sendEvent(AirqEvent<EnrichedDataEventPayload> event) {
+        EnrichedData enrichedData = event.payload.enrichedData;
+        TSKey key = TSKey.from(enrichedData.timestamp, enrichedData.station.value());
+        final Future<RecordMetadata> future = producer.send(new ProducerRecord<>(enrichedDataTopic, key, event));
         try {
-            future.get();
-        } catch (InterruptedException | ExecutionException e) {
+            future.get(5, TimeUnit.SECONDS);
+            return key;
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private String getTopic(AirqEvent<?> airqEvent) {
-        if (airqEvent.eventType().equals(AirqDataEnrichedEvent.class.getSimpleName())) {
-            return dataEnrichedTopic;
-        }
+    private AirqEvent<AirqPhenotypeCreatedPayload> awaitForEvent(TSKey key) {
+        SKey sKey = new SKey(key.stationId());
+        await().atMost(Duration.ofSeconds(5)).until(() -> eventsMap.containsKey(sKey));
+        return eventsMap.get(sKey);
+    }
 
-        throw new RuntimeException("Invalid event: " + airqEvent.eventType());
+    private void sleep(Duration duration) {
+        try {
+            Thread.sleep(duration.toMillis());
+        } catch (InterruptedException ignore) {
+        }
     }
 
     @Dependent
     static class KafkaConfiguration {
 
+        @ConfigProperty(name = "kafka.bootstrap.servers")
+        String bootstrapServers;
+        @ConfigProperty(name = "mp.messaging.outgoing.phenotype-created.topic")
+        String phenotypeCreatedTopic;
+
+        @Inject
+        EventParser parser;
+
         @Produces
-        KafkaConsumer<Void, String> kafkaConsumer(@ConfigProperty(name = "kafka.bootstrap.servers") String bootstrapServers,
-                                                  @ConfigProperty(name = "mp.messaging.outgoing.phenotype-created.topic") String topic) {
+        KafkaProducer<TSKey, AirqEvent<EnrichedDataEventPayload>> stringKafkaProducer() {
+            Properties properties = new Properties();
+            properties.put("bootstrap.servers", bootstrapServers);
+
+            return new KafkaProducer<>(properties, new TSKeySerializer(), new AirqEventSerializer<>(parser));
+        }
+
+        @Produces
+        KafkaConsumer<SKey, AirqEvent<AirqPhenotypeCreatedPayload>> kafkaConsumer() {
             Properties properties = new Properties();
             properties.put("bootstrap.servers", bootstrapServers);
             properties.put("enable.auto.commit", "true");
             properties.put("group.id", "airq-ga-int-test");
-            properties.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
-            properties.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
             properties.put("auto.offset.reset", "earliest");
 
-            KafkaConsumer<Void, String> consumer = new KafkaConsumer<>(properties);
-            consumer.subscribe(Collections.singleton(topic));
+            KafkaConsumer<SKey, AirqEvent<AirqPhenotypeCreatedPayload>> consumer = new KafkaConsumer<>(
+                    properties, new SKeyDeserializer(), new AirqEventDeserializer<>(parser)
+            );
+            consumer.subscribe(Collections.singleton(phenotypeCreatedTopic));
             return consumer;
-        }
-
-        @Produces
-        KafkaProducer<Void, String> stringKafkaProducer(@ConfigProperty(name = "kafka.bootstrap.servers") String bootstrapServers) {
-            Properties properties = new Properties();
-            properties.put("bootstrap.servers", bootstrapServers);
-            properties.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
-            properties.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
-
-            return new KafkaProducer<>(properties);
         }
 
     }
