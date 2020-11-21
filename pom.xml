@@ -8,7 +8,7 @@
     <parent>
         <groupId>pl.airq</groupId>
         <artifactId>parent-pom</artifactId>
-        <version>1.4-SNAPSHOT</version>
+        <version>1.4</version>
     </parent>
 
     <scm>
@@ -19,7 +19,7 @@
     </scm>
 
     <properties>
-        <common.version>1.10-SNAPSHOT</common.version>
+        <common.version>1.10</common.version>
         <jenetics.version>6.0.1</jenetics.version>
     </properties>
 
