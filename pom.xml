@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>pl.airq</groupId>
     <artifactId>ga</artifactId>
-    <version>1.0.6</version>
+    <version>1.0.7-SNAPSHOT</version>
 
     <parent>
         <groupId>pl.airq</groupId>
@@ -15,7 +15,7 @@
         <developerConnection>scm:git:https://github.com/cssrumi/airq-ga.git</developerConnection>
         <connection>scm:git:https://github.com/cssrumi/airq-ga.git</connection>
         <url>https://github.com/cssrumi/airq-ga.git</url>
-        <tag>ga-1.0.6</tag>
+        <tag>HEAD</tag>
     </scm>
 
     <properties>
